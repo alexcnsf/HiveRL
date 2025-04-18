@@ -61,6 +61,32 @@ class HiveEnv(gym.Env):
         """Decode a single integer into action components."""
         return np.unravel_index(action_id, self.action_dims)
         
+    def print_board_state(self):
+        """Print the current board state in a readable format"""
+        print("\nCurrent Board State:")
+        print("------------------")
+        for y in range(5):
+            row = ""
+            for x in range(5):
+                cell = "."
+                for piece_type in range(3):
+                    if self.state[piece_type, x, y] == 1:
+                        cell = "Q" if piece_type == 0 else ("B" if piece_type == 1 else "A")
+                    elif self.state[piece_type, x, y] == 2:
+                        cell = "q" if piece_type == 0 else ("b" if piece_type == 1 else "a")
+                row += cell + " "
+            print(row)
+        print("\nLegend:")
+        print("Q/q = Queen (upper=P1, lower=P2)")
+        print("B/b = Beetle")
+        print("A/a = Ant")
+        print(". = Empty")
+        print("\nRemaining Pieces (P1/P2):")
+        print(f"Queens: {self.remaining_pieces[0]}/{self.remaining_pieces[3]}")
+        print(f"Beetles: {self.remaining_pieces[1]}/{self.remaining_pieces[4]}")
+        print(f"Ants: {self.remaining_pieces[2]}/{self.remaining_pieces[5]}")
+        print(f"\nTurn: {self.turn_count}, Current Player: {self.current_player}")
+        
     def get_action_mask(self) -> np.ndarray:
         """
         Generate a mask for valid actions.
@@ -77,7 +103,7 @@ class HiveEnv(gym.Env):
             piece_idx = piece_type + (3 if self.current_player == 2 else 0)
             has_piece = self.remaining_pieces[piece_idx] > 0
             
-            # Check placement actions
+            # Check placement actions - only if player has pieces remaining
             if has_piece:
                 for x in range(5):
                     for y in range(5):
@@ -86,11 +112,11 @@ class HiveEnv(gym.Env):
                         ):
                             mask_6d[piece_type, 0, x, y, 0, 0] = True  # from_x, from_y don't matter for placements
             
-            # Check movement actions
+            # Check movement actions - always check for valid moves regardless of remaining pieces
             # First find all pieces of this type that belong to current player
             piece_positions = np.where(self.state[piece_type] == self.current_player)
-            for from_x, from_y in zip(*piece_positions):
-                # Check all possible moves from this position
+            for from_x, from_y in zip(piece_positions[0], piece_positions[1]):
+                # Check all possible destination positions
                 for to_x in range(5):
                     for to_y in range(5):
                         if HiveRules.is_valid_move(
@@ -98,12 +124,49 @@ class HiveEnv(gym.Env):
                         ):
                             mask_6d[piece_type, 1, to_x, to_y, from_x, from_y] = True
         
-        # Flatten the mask
-        return mask_6d.reshape(-1)
+        mask_flat = mask_6d.flatten()
+        #print(f"[Turn {self.turn_count}] Valid actions: {np.sum(mask_flat)}")
+
+        '''
+        valid_indices = np.where(mask_flat)[0]
+        for i in valid_indices[:5]:  # Just show the first 5
+            print(" - Valid action:", self.decode_action(i))
+        '''
+            
+        return mask_flat
         
     def _is_valid_action(self, action_id: int) -> bool:
-        """Check if an action is valid using the action mask."""
-        return self.get_action_mask()[action_id]
+        """Check if an action is valid."""
+        # Decode the action
+        piece_type, action_type, x, y, from_x, from_y = self.decode_action(action_id)
+        
+        # Basic bounds checking
+        if not (0 <= x < 5 and 0 <= y < 5):
+            return False
+            
+        if action_type == 1:  # Movement
+            if not (0 <= from_x < 5 and 0 <= from_y < 5):
+                return False
+                
+        # Check if piece exists at from_pos for movements
+        if action_type == 1 and self.state[piece_type, from_x, from_y] != self.current_player:
+            return False
+            
+        # Check if player has pieces remaining for placements
+        if action_type == 0:
+            piece_idx = piece_type + (3 if self.current_player == 2 else 0)
+            if self.remaining_pieces[piece_idx] <= 0:
+                return False
+                
+        # Check game rules
+        if action_type == 0:  # Placement
+            return HiveRules.is_valid_placement(
+                self.state, piece_type, x, y, self.current_player, self.turn_count
+            )
+        else:  # Movement
+            return HiveRules.is_valid_move(
+                self.state, piece_type, (from_x, from_y), (x, y), self.current_player
+            )
     
     def _calculate_reward(self, action_id: int) -> float:
         """Calculate the reward for the current action."""
@@ -117,38 +180,33 @@ class HiveEnv(gym.Env):
         if game_over:
             return 1.0 if winner == self.current_player else -1.0
             
-        # Progressive rewards
+        # Progressive rewards (scaled down to keep total reward in [-1, 1])
         if action_type == 0:  # Placement
             if piece_type == 0:  # Queen placement
-                reward += 0.1
+                reward += 0.01  # Reduced from 0.1
                 
             # Check if this placement surrounds opponent's queen
             opponent_queen_pos = np.where(self.state[0] == (3 - self.current_player))
             if len(opponent_queen_pos[0]) > 0:
                 queen_x, queen_y = opponent_queen_pos[0][0], opponent_queen_pos[1][0]
                 if self._is_adjacent((x, y), (queen_x, queen_y)):
-                    reward += 0.2
+                    reward += 0.02  # Reduced from 0.2
                     
         else:  # Movement
             # Check if movement maintains hive connectivity
-            if HiveRules.maintains_hive_connectivity(self.state, piece_type, (from_x, from_y), (x, y)):
-                reward += 0.02
+            if HiveRules.maintains_hive_connectivity(self.state, (from_x, from_y), (x, y)):
+                reward += 0.002  # Reduced from 0.02
                 
             # Piece-specific rewards
             if piece_type == 1:  # Beetle
                 if self.state[piece_type, x, y] > 0:  # Climbing
-                    reward += 0.05
+                    reward += 0.005  # Reduced from 0.05
             elif piece_type == 2:  # Ant
                 distance = abs(x - from_x) + abs(y - from_y)
                 if distance > 2:  # Long-distance movement
-                    reward += 0.03
+                    reward += 0.003  # Reduced from 0.03
                     
-        # Temporal rewards
-        if self.turn_count < 20:
-            reward += 0.01
-        else:
-            reward -= 0.01
-            
+        # Temporal rewards (removed to prevent reward accumulation)
         return reward
         
     def _is_adjacent(self, pos1: Tuple[int, int], pos2: Tuple[int, int]) -> bool:

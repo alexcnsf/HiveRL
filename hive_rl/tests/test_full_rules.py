@@ -96,14 +96,26 @@ def test_queen_placement_rule():
     state = np.zeros((3, 5, 5), dtype=np.int8)
     
     print("\nTesting queen placement rule:")
-    # First turn - can place queen
-    assert HiveRules.is_valid_placement(state, 0, 2, 2, 1, 0)
-    # After turn 3 - can still place queen
-    assert HiveRules.is_valid_placement(state, 0, 2, 2, 1, 3)
-    # On turn 4 - can place queen
-    assert HiveRules.is_valid_placement(state, 0, 2, 2, 1, 4)
-    # After turn 4 - cannot place queen
-    assert not HiveRules.is_valid_placement(state, 0, 2, 2, 1, 5)
+    
+    # First piece at center (turn 0)
+    assert HiveRules.is_valid_placement(state, 2, 2, 2, 1, 0)  # Ant at center is valid
+    state[2, 2, 2] = 1  # Place ant at center
+    
+    # Turns 1-3: Can place queen or other pieces
+    for turn in range(1, 4):
+        assert HiveRules.is_valid_placement(state, 0, 2, 3, 1, turn), f"Should allow queen placement on turn {turn}"
+        assert HiveRules.is_valid_placement(state, 1, 2, 3, 1, turn), f"Should allow beetle placement on turn {turn}"
+        assert HiveRules.is_valid_placement(state, 2, 2, 3, 1, turn), f"Should allow ant placement on turn {turn}"
+    
+    # Turn 4: If queen not placed yet, ONLY queen placement is valid
+    assert HiveRules.is_valid_placement(state, 0, 2, 3, 1, 4), "Must allow queen placement on turn 4"
+    assert not HiveRules.is_valid_placement(state, 1, 2, 3, 1, 4), "Must not allow beetle placement on turn 4"
+    assert not HiveRules.is_valid_placement(state, 2, 2, 3, 1, 4), "Must not allow ant placement on turn 4"
+    
+    # Place queen and verify other pieces can be placed again
+    state[0, 2, 3] = 1  # Place queen
+    assert HiveRules.is_valid_placement(state, 1, 2, 1, 1, 4), "Should allow beetle placement after queen placed"
+    assert HiveRules.is_valid_placement(state, 2, 3, 2, 1, 4), "Should allow ant placement after queen placed"
 
 def test_full_gameplay():
     # Create empty state

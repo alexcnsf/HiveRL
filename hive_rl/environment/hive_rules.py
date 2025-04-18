@@ -12,61 +12,64 @@ class HiveRules:
         Rules:
         1. First piece must be placed at center (2,2)
         2. Subsequent pieces must be adjacent to at least one existing piece
-           (except for first move of each player)
+           - Player 1's first move must be adjacent to their center piece
+           - Player 2's first move (turn 1 or 2) must be adjacent to any piece
+           - All other moves must be adjacent to friendly pieces
         3. Cannot place on top of existing pieces
         4. Queen must be placed by turn 4 (must place on turn 4 if not placed yet)
         """
+        #print(f"\nChecking placement: piece_type={piece_type}, pos=({x},{y}), player={current_player}, turn={turn_count}")
+        
         # Check if position is within bounds
         if not (0 <= x < 5 and 0 <= y < 5):
+            #print("Position out of bounds")
             return False
             
         # Check if position is already occupied
         if np.any(state[:, x, y] > 0):
-            return False
-            
-        # Queen placement rule - check this first
-        if piece_type == 0 and turn_count >= 5:  # Queen cannot be placed after turn 4
+            #print("Position already occupied")
             return False
             
         # Special rule for first piece
         if np.sum(state) == 0:
+            #print("First piece must be at center")
             return x == 2 and y == 2  # Must start at center
-            
-        # Must place queen by turn 4
-        if turn_count == 4 and state[0, :, :].sum() == 0 and piece_type != 0:
-            return False
             
         # Check adjacency rules
         has_adjacent = False
         has_friendly = False
         
-        # Check all adjacent positions at the same level
+        # Check all adjacent positions
         for dx, dy in [(0, 1), (1, 0), (1, -1), (0, -1), (-1, 0), (-1, 1)]:
             nx, ny = x + dx, y + dy
             if 0 <= nx < 5 and 0 <= ny < 5:
-                # Check if there's any piece at this position across all piece types
-                for pt in range(state.shape[0]):
-                    if state[pt, nx, ny] != 0:
-                        has_adjacent = True
-                        if state[pt, nx, ny] == current_player:
-                            has_friendly = True
-                            break
-                if has_friendly:
-                    break
+                # Check if there's any piece at this position
+                if np.any(state[:, nx, ny] > 0):
+                    has_adjacent = True
+                    # Check if it's a friendly piece
+                    if np.any(state[:, nx, ny] == current_player):
+                        has_friendly = True
+                        break
         
-        # First piece must be at center
-        if turn_count == 0:
-            return x == 2 and y == 2
+        #print(f"Adjacency check: has_adjacent={has_adjacent}, has_friendly={has_friendly}")
         
         # Player 1's first move must be adjacent to their center piece
         if turn_count == 1 and current_player == 1:
-            return has_adjacent and state[piece_type, 2, 2] == 1
-        
-        # Player 2's first move must be adjacent to any piece
-        if turn_count == 2 and current_player == 2:
+            #print("Player 1's first move")
             return has_adjacent
-        
+            
+        # Player 2's first move must be adjacent to any piece (can be on turn 1 or 2)
+        if (turn_count in [1, 2]) and current_player == 2 and not np.any(state[:, :, :] == 2):
+            #print("Player 2's first move")
+            return has_adjacent
+            
+        # On turn 4, if queen hasn't been placed, must place queen
+        if turn_count == 4 and state[0, :, :].sum() == 0:
+            #print("Must place queen on turn 4")
+            return piece_type == 0 and has_friendly
+            
         # All other moves must be adjacent to at least one friendly piece
+        #print("Regular move")
         return has_friendly
     
     @staticmethod
@@ -99,15 +102,6 @@ class HiveRules:
             if state[other_type, from_x, from_y] > 0:
                 return False
             
-        # Check if to_pos is empty (except for beetles)
-        # Ants (type 2) and Queens (type 0) cannot move onto occupied spaces
-        if (piece_type == 0 or piece_type == 2) and np.any(state[:, to_x, to_y] > 0):
-            return False
-            
-        # Check piece-specific movement rules
-        if not HiveRules.is_valid_piece_movement(state, piece_type, from_pos, to_pos):
-            return False
-            
         # Special handling for beetles
         if piece_type == 1:
             # Check if beetle is moving to an adjacent position
@@ -121,6 +115,15 @@ class HiveRules:
             if np.any(state[:, to_x, to_y] > 0) or np.any(state[:, from_x, from_y] > 1):
                 return True
                 
+        # Check if to_pos is empty (except for beetles)
+        # Ants (type 2) and Queens (type 0) cannot move onto occupied spaces
+        if (piece_type == 0 or piece_type == 2) and np.any(state[:, to_x, to_y] > 0):
+            return False
+            
+        # Check piece-specific movement rules
+        if not HiveRules.is_valid_piece_movement(state, piece_type, from_pos, to_pos):
+            return False
+            
         # Check hive connectivity
         if not HiveRules.maintains_hive_connectivity(state, from_pos, to_pos):
             return False
@@ -140,7 +143,17 @@ class HiveRules:
         
         # Create temporary state without the moving piece
         temp_state = state.copy()
-        piece_type = np.argmax(temp_state[:, from_x, from_y])
+        
+        # Find the piece type at from_pos
+        piece_type = None
+        for pt in range(3):
+            if temp_state[pt, from_x, from_y] > 0:
+                piece_type = pt
+                break
+                
+        if piece_type is None:
+            return False
+            
         temp_state[piece_type, from_x, from_y] = 0
         
         # For beetles, if moving onto another piece, it's always connected
@@ -191,35 +204,32 @@ class HiveRules:
     @staticmethod
     def is_valid_piece_movement(state: np.ndarray, piece_type: int, 
                               from_pos: Tuple[int, int], to_pos: Tuple[int, int]) -> bool:
-        """Check if movement follows piece-specific rules."""
+        """
+        Check if a piece's movement follows its specific movement rules.
+        - Queen: Can move one space in any direction
+        - Beetle: Can move one space in any direction (including diagonally)
+        - Ant: Can move any number of spaces around the hive
+        """
         from_x, from_y = from_pos
         to_x, to_y = to_pos
         
-        # Calculate distance
+        # Calculate movement distance
         dx = abs(to_x - from_x)
         dy = abs(to_y - from_y)
         
-        if piece_type == 0:  # Queen
-            # Queen moves exactly one space in any direction
-            return (dx <= 1 and dy <= 1) and (dx + dy > 0)
+        # Queen movement: one space in any direction
+        if piece_type == 0:
+            return dx <= 1 and dy <= 1 and (dx + dy == 1)
             
-        elif piece_type == 1:  # Beetle
-            # Beetle moves exactly one space in any direction
-            return (dx <= 1 and dy <= 1) and (dx + dy > 0)
+        # Beetle movement: one space in any direction (including diagonally)
+        if piece_type == 1:
+            return dx <= 1 and dy <= 1 and (dx + dy > 0)
             
-        elif piece_type == 2:  # Ant
-            # Ant can move any number of spaces around the hive
-            # Cannot move on top of other pieces
-            # Must stay adjacent to at least one piece
-            if np.any(state[:, to_x, to_y] > 0):  # Cannot move on top of other pieces
-                return False
-                
-            adjacent_positions = HiveRules.get_adjacent_positions(to_x, to_y)
-            for adj_x, adj_y in adjacent_positions:
-                if 0 <= adj_x < 5 and 0 <= adj_y < 5:
-                    if np.any(state[:, adj_x, adj_y] > 0):
-                        return True
-            return False
+        # Ant movement: any number of spaces around the hive
+        if piece_type == 2:
+            # For ants, we need to check if there's a valid path around the hive
+            # This is handled by the maintains_hive_connectivity check
+            return True
             
         return False
     
@@ -260,10 +270,24 @@ class HiveRules:
 
     @staticmethod
     def can_slide_in_out(state: np.ndarray, from_pos: Tuple[int, int], to_pos: Tuple[int, int]) -> bool:
-        """Check if a piece can slide in/out of a position without being blocked by gates."""
+        """
+        Check if a piece can slide in/out of a position without being blocked by gates.
+        For beetles, this check is always true since they can climb over pieces.
+        """
         from_x, from_y = from_pos
         to_x, to_y = to_pos
         
+        # Get the piece type that's moving
+        piece_type = -1
+        for pt in range(3):
+            if state[pt, from_x, from_y] > 0:
+                piece_type = pt
+                break
+                
+        # Beetles can always move (they climb over pieces)
+        if piece_type == 1:
+            return True
+            
         # Get all adjacent positions to both from and to
         from_adjacent = HiveRules.get_adjacent_positions(from_x, from_y)
         to_adjacent = HiveRules.get_adjacent_positions(to_x, to_y)
@@ -285,7 +309,7 @@ class HiveRules:
                                     if abs(other_adj_x - adj_x) <= 1 and abs(other_adj_y - adj_y) <= 1:
                                         return False  # Found a gate that blocks movement
                                         
-        return True  # No blocking gates found 
+        return True  # No blocking gates found
 
     @staticmethod
     def check_win_condition(state: np.ndarray) -> Tuple[bool, int]:
