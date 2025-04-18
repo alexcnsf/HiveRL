@@ -37,33 +37,37 @@ class HiveRules:
             return False
             
         # Check adjacency rules
-        adjacent_positions = HiveRules.get_adjacent_positions(x, y)
         has_adjacent = False
+        has_friendly = False
         
-        # Check if this is player 2's first move
-        is_player2_first_move = current_player == 2 and np.sum(state == 2) == 0
-        
-        for adj_x, adj_y in adjacent_positions:
-            if 0 <= adj_x < 5 and 0 <= adj_y < 5:
-                # Check for opponent pieces - if found and not player 2's first move, placement is invalid
-                if not is_player2_first_move:
-                    for piece_layer in range(3):
-                        if state[piece_layer, adj_x, adj_y] == 3 - current_player:
-                            return False
-                # Check for any adjacent pieces
-                for piece_layer in range(3):
-                    if state[piece_layer, adj_x, adj_y] > 0:
+        # Check all adjacent positions at the same level
+        for dx, dy in [(0, 1), (1, 0), (1, -1), (0, -1), (-1, 0), (-1, 1)]:
+            nx, ny = x + dx, y + dy
+            if 0 <= nx < 5 and 0 <= ny < 5:
+                # Check if there's any piece at this position across all piece types
+                for pt in range(state.shape[0]):
+                    if state[pt, nx, ny] != 0:
                         has_adjacent = True
-                        
-        # For player 2's first move, must be adjacent to player 1's piece
-        if is_player2_first_move:
+                        if state[pt, nx, ny] == current_player:
+                            has_friendly = True
+                            break
+                if has_friendly:
+                    break
+        
+        # First piece must be at center
+        if turn_count == 0:
+            return x == 2 and y == 2
+        
+        # Player 1's first move must be adjacent to their center piece
+        if turn_count == 1 and current_player == 1:
+            return has_adjacent and state[piece_type, 2, 2] == 1
+        
+        # Player 2's first move must be adjacent to any piece
+        if turn_count == 2 and current_player == 2:
             return has_adjacent
-            
-        # For other moves, must have at least one adjacent piece (except first piece)
-        if np.sum(state) > 0 and not has_adjacent:
-            return False
-            
-        return True
+        
+        # All other moves must be adjacent to at least one friendly piece
+        return has_friendly
     
     @staticmethod
     def is_valid_move(state: np.ndarray, piece_type: int, from_pos: Tuple[int, int], 
@@ -76,6 +80,7 @@ class HiveRules:
         3. Movement must follow piece-specific rules
         4. Movement must maintain hive connectivity (except for beetles moving on top)
         5. Cannot move a piece that has another piece on top of it
+        6. Piece must be able to slide in/out of its position
         """
         from_x, from_y = from_pos
         to_x, to_y = to_pos
@@ -118,6 +123,10 @@ class HiveRules:
                 
         # Check hive connectivity
         if not HiveRules.maintains_hive_connectivity(state, from_pos, to_pos):
+            return False
+            
+        # Check if piece can slide in/out of position
+        if not HiveRules.can_slide_in_out(state, from_pos, to_pos):
             return False
             
         return True
@@ -192,12 +201,10 @@ class HiveRules:
         
         if piece_type == 0:  # Queen
             # Queen moves exactly one space in any direction
-            # Cannot move on top of other pieces
             return (dx <= 1 and dy <= 1) and (dx + dy > 0)
             
         elif piece_type == 1:  # Beetle
             # Beetle moves exactly one space in any direction
-            # Can move on top of other pieces
             return (dx <= 1 and dy <= 1) and (dx + dy > 0)
             
         elif piece_type == 2:  # Ant
@@ -245,7 +252,56 @@ class HiveRules:
         for adj_x, adj_y in adjacent_positions:
             if not (0 <= adj_x < 5 and 0 <= adj_y < 5):
                 return False
+            # Check if there's any piece at this position at any level
             if not np.any(state[:, adj_x, adj_y] > 0):
                 return False
                 
         return True 
+
+    @staticmethod
+    def can_slide_in_out(state: np.ndarray, from_pos: Tuple[int, int], to_pos: Tuple[int, int]) -> bool:
+        """Check if a piece can slide in/out of a position without being blocked by gates."""
+        from_x, from_y = from_pos
+        to_x, to_y = to_pos
+        
+        # Get all adjacent positions to both from and to
+        from_adjacent = HiveRules.get_adjacent_positions(from_x, from_y)
+        to_adjacent = HiveRules.get_adjacent_positions(to_x, to_y)
+        
+        # Find common adjacent positions (these form potential gates)
+        common_adjacent = set(from_adjacent) & set(to_adjacent)
+        
+        # For each common adjacent position, check if it's occupied
+        for adj_x, adj_y in common_adjacent:
+            if 0 <= adj_x < 5 and 0 <= adj_y < 5:
+                if np.any(state[:, adj_x, adj_y] > 0):
+                    # If this position is occupied, check if it forms a gate
+                    # A gate is formed when two adjacent pieces share a common adjacent position
+                    for other_adj_x, other_adj_y in common_adjacent:
+                        if (other_adj_x, other_adj_y) != (adj_x, adj_y):
+                            if 0 <= other_adj_x < 5 and 0 <= other_adj_y < 5:
+                                if np.any(state[:, other_adj_x, other_adj_y] > 0):
+                                    # Check if these two pieces are adjacent to each other
+                                    if abs(other_adj_x - adj_x) <= 1 and abs(other_adj_y - adj_y) <= 1:
+                                        return False  # Found a gate that blocks movement
+                                        
+        return True  # No blocking gates found 
+
+    @staticmethod
+    def check_win_condition(state: np.ndarray) -> Tuple[bool, int]:
+        """
+        Check if the game has been won.
+        Returns:
+            Tuple[bool, int]: (game_over, winner)
+            game_over: True if game is over, False otherwise
+            winner: 1 if player 1 won, 2 if player 2 won, 0 if game is not over
+        """
+        # Check if player 1's queen is surrounded
+        if HiveRules.is_queen_surrounded(state, 1):
+            return True, 2  # Player 2 wins
+            
+        # Check if player 2's queen is surrounded
+        if HiveRules.is_queen_surrounded(state, 2):
+            return True, 1  # Player 1 wins
+            
+        return False, 0  # Game continues 

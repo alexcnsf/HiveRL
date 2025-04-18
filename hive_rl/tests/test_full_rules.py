@@ -195,6 +195,83 @@ def test_beetle_movement():
     assert state[1, 2, 3] == 1  # Beetle is on ant
     assert state[2, 2, 3] == 1  # Ant is still there
 
+def test_beetle_queen_surround():
+    """Test a full sequence where beetle moves on top of queen and queen gets surrounded."""
+    # Create empty state
+    state = np.zeros((3, 5, 5), dtype=np.int8)
+    
+    print("\nTesting beetle on queen and queen surround sequence:")
+    
+    # Player 1 places queen at center
+    assert HiveRules.is_valid_placement(state, 0, 2, 2, 1, 0)
+    state[0, 2, 2] = 1
+    print("Player 1 places queen at (2,2)")
+    
+    # Player 2 places beetle adjacent to queen
+    assert HiveRules.is_valid_placement(state, 1, 2, 3, 2, 2)
+    state[1, 2, 3] = 2
+    print("Player 2 places beetle at (2,3)")
+    
+    # Player 1 places ant adjacent to queen
+    assert HiveRules.is_valid_placement(state, 2, 2, 1, 1, 2)
+    state[2, 2, 1] = 1
+    print("Player 1 places ant at (2,1)")
+    
+    # Player 2 moves beetle on top of queen
+    assert HiveRules.is_valid_move(state, 1, (2, 3), (2, 2), 2)
+    state[1, 2, 3] = 0  # Remove beetle from original position
+    state[1, 2, 2] = 2  # Place beetle on top of queen
+    print("Player 2 moves beetle on top of queen")
+    
+    # Player 1 places ant adjacent to beetle (even though it's on top)
+    assert HiveRules.is_valid_placement(state, 2, 1, 2, 1, 3)
+    state[2, 1, 2] = 1
+    print("Player 1 places ant at (1,2) adjacent to beetle")
+    
+    # Player 2 places beetle adjacent to beetle on queen
+    assert HiveRules.is_valid_placement(state, 1, 2, 3, 2, 4)
+    state[1, 2, 3] = 2
+    print("Player 2 places beetle at (2,3) adjacent to beetle on queen")
+    
+    # Player 1 places ant to start surrounding queen
+    assert HiveRules.is_valid_placement(state, 2, 3, 1, 1, 5)
+    state[2, 3, 1] = 1
+    print("Player 1 places ant at (3,1)")
+    
+    # Player 2 places ant to continue surrounding
+    assert HiveRules.is_valid_placement(state, 2, 3, 2, 2, 6)
+    state[2, 3, 2] = 2
+    print("Player 2 places ant at (3,2)")
+    
+    # Player 1 places ant to complete queen surround
+    assert HiveRules.is_valid_placement(state, 2, 1, 3, 1, 7)
+    state[2, 1, 3] = 1
+    print("Player 1 places ant at (1,3)")
+    
+    # Verify queen is surrounded
+    assert HiveRules.is_queen_surrounded(state, 1)
+    print("Queen is now surrounded!")
+
+    # Test win condition
+    game_over, winner = HiveRules.check_win_condition(state)
+    assert game_over
+    assert winner == 2
+    print("Player 2 wins the game!")
+
+    # Test Freedom to Move rule
+    print("\nTesting Freedom to Move rule:")
+    # Try to move ant from (1,2) to (2,1) - should fail because of gate at (1,1) and (2,2)
+    assert not HiveRules.is_valid_move(state, 2, (1, 2), (2, 1), 1)
+    print("Ant cannot move through gate formed by pieces at (1,1) and (2,2)")
+
+    # Try to move ant from (1,2) to (0,2) - should succeed as there's no gate
+    assert HiveRules.is_valid_move(state, 2, (1, 2), (0, 2), 1)
+    print("Ant can move to (0,2) as there's no gate blocking the path")
+
+    # Beetle can still move even with queen surrounded
+    assert HiveRules.is_valid_move(state, 1, (2, 2), (2, 3), 2)
+    print("Beetle can still move even with queen surrounded")
+
 if __name__ == "__main__":
     print("Testing Complete Hive Rules Implementation")
     print("=" * 50)
@@ -204,5 +281,6 @@ if __name__ == "__main__":
     test_hive_connectivity()
     test_queen_placement_rule()
     test_full_gameplay()
+    test_beetle_queen_surround()
     
     print("\nAll tests completed successfully!") 
